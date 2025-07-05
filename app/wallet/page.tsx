@@ -3,13 +3,13 @@
 import Link from "next/link";
 import { ArrowLeft, Wallet } from "lucide-react";
 import { useTonWallet, useTonAddress } from "@tonconnect/ui-react";
-import axios from "axios";
-
 import { Button } from "@/components/ui/button";
 import { TonTransactionDemo } from "@/components/ton-transaction-demo";
 import { api } from "@/services/api";
+import { AxiosInstance } from 'axios';
+const axios = AxiosInstance.create();
 import { useEffect, useState } from "react";
-import { Transaction } from "@/types";
+import { Transaction } from "@/app/types";
 
 const TONCENTER_API = "https://toncenter.com/api/v2";
 
