@@ -1,0 +1,286 @@
+#include "imports/stdlib.fc";
+
+;; Storage
+;; storage#_ owner_address:MsgAddress
+;;           assets_count:uint64
+;;           next_asset_id:uint64
+;;           = Storage;
+
+;; Asset
+;; asset#_ id:uint64
+;;         name:^Cell
+;;         description:^Cell
+;;         owner_address:MsgAddress
+;;         price:Coins
+;;         status:uint8
+;;         auction_end_time:uint64
+;;         = Asset;
+
+;; Op codes
+const int op::add_asset = 1;
+const int op::place_bid = 2;
+const int op::transfer_asset = 3;
+const int op::withdraw_funds = 4;
+
+;; Asset status
+const int status::active = 0;
+const int status::sold = 1;
+const int status::auction = 2;
+
+;; Storage variables
+(slice, int, int) load_data() inline {
+    slice ds = get_data().begin_parse();
+    return (
+        ds~load_msg_addr(),  ;; owner_address
+        ds~load_uint(64),    ;; assets_count
+        ds~load_uint(64)     ;; next_asset_id
+    );
+}
+
+() save_data(slice owner_address, int assets_count, int next_asset_id) impure inline {
+    set_data(begin_cell()
+        .store_slice(owner_address)
+        .store_uint(assets_count, 64)
+        .store_uint(next_asset_id, 64)
+        .end_cell());
+}
+
+;; Asset functions
+() add_asset(slice sender_address, slice name, slice description, int price, int status, int auction_end_time) impure {
+    (slice owner_address, int assets_count, int next_asset_id) = load_data();
+    
+    ;; Only contract owner can add assets
+    throw_unless(401, equal_slices(sender_address, owner_address));
+    
+    ;; Create new asset cell
+    cell asset_data = begin_cell()
+        .store_uint(next_asset_id, 64)
+        .store_ref(begin_cell().store_slice(name).end_cell())
+        .store_ref(begin_cell().store_slice(description).end_cell())
+        .store_slice(sender_address)
+        .store_coins(price)
+        .store_uint(status, 8)
+        .store_uint(auction_end_time, 64)
+        .end_cell();
+    
+    ;; Store asset in state
+    cell assets_dict = new_dict();
+    if (assets_count > 0) {
+        assets_dict = get_data().begin_parse().skip_bits(64 + 256).preload_dict();
+    }
+    assets_dict~udict_set_ref(64, next_asset_id, asset_data);
+    
+    ;; Update state
+    set_data(begin_cell()
+        .store_slice(owner_address)
+        .store_uint(assets_count + 1, 64)
+        .store_uint(next_asset_id + 1, 64)
+        .store_dict(assets_dict)
+        .end_cell());
+}
+
+() place_bid(slice sender_address, int asset_id, int amount) impure {
+    (slice owner_address, int assets_count, int next_asset_id) = load_data();
+    
+    ;; Load assets dictionary
+    cell assets_dict = get_data().begin_parse().skip_bits(64 + 256).preload_dict();
+    
+    ;; Check if asset exists
+    (cell asset_cell, int success) = assets_dict.udict_get_ref?(64, asset_id);
+    throw_unless(404, success);
+    
+    ;; Parse asset data
+    slice asset_data = asset_cell.begin_parse();
+    int id = asset_data~load_uint(64);
+    cell name_cell = asset_data~load_ref();
+    cell desc_cell = asset_data~load_ref();
+    slice current_owner = asset_data~load_msg_addr();
+    int price = asset_data~load_coins();
+    int status = asset_data~load_uint(8);
+    int auction_end_time = asset_data~load_uint(64);
+    
+    ;; Check if asset is available for bidding
+    throw_unless(403, status == status::active || status == status::auction);
+    
+    ;; Check if bid amount is higher than current price
+    throw_unless(402, amount > price);
+    
+    ;; Check if auction hasn't ended
+    if (status == status::auction) {
+        throw_unless(405, now() < auction_end_time);
+    }
+    
+    ;; Update asset with new price
+    cell updated_asset = begin_cell()
+        .store_uint(id, 64)
+        .store_ref(name_cell)
+        .store_ref(desc_cell)
+        .store_slice(current_owner)
+        .store_coins(amount)
+        .store_uint(status, 8)
+        .store_uint(auction_end_time, 64)
+        .end_cell();
+    
+    ;; Update dictionary
+    assets_dict~udict_set_ref(64, asset_id, updated_asset);
+    
+    ;; Save updated dictionary
+    set_data(begin_cell()
+        .store_slice(owner_address)
+        .store_uint(assets_count, 64)
+        .store_uint(next_asset_id, 64)
+        .store_dict(assets_dict)
+        .end_cell());
+    
+    ;; Send notification to asset owner
+    var msg = begin_cell()
+        .store_uint(0x10, 6)
+        .store_slice(current_owner)
+        .store_coins(0)
+        .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+        .store_uint(op::place_bid, 32)
+        .store_uint(asset_id, 64)
+        .store_coins(amount)
+        .store_slice(sender_address)
+        .end_cell();
+    
+    send_raw_message(msg, 64); ;; Pay fees separately, revert on errors
+}
+
+() transfer_asset(slice sender_address, int asset_id, slice new_owner_address) impure {
+    (slice owner_address, int assets_count, int next_asset_id) = load_data();
+    
+    ;; Only contract owner can transfer assets
+    throw_unless(401, equal_slices(sender_address, owner_address));
+    
+    ;; Load assets dictionary
+    cell assets_dict = get_data().begin_parse().skip_bits(64 + 256).preload_dict();
+    
+    ;; Check if asset exists
+    (cell asset_cell, int success) = assets_dict.udict_get_ref?(64, asset_id);
+    throw_unless(404, success);
+    
+    ;; Parse asset data
+    slice asset_data = asset_cell.begin_parse();
+    int id = asset_data~load_uint(64);
+    cell name_cell = asset_data~load_ref();
+    cell desc_cell = asset_data~load_ref();
+    slice current_owner = asset_data~load_msg_addr();
+    int price = asset_data~load_coins();
+    int auction_end_time = asset_data~load_uint(64);
+    
+    ;; Update asset with new owner
+    cell updated_asset = begin_cell()
+        .store_uint(id, 64)
+        .store_ref(name_cell)
+        .store_ref(desc_cell)
+        .store_slice(new_owner_address)
+        .store_coins(price)
+        .store_uint(status::sold, 8)
+        .store_uint(auction_end_time, 64)
+        .end_cell();
+    
+    ;; Update dictionary
+    assets_dict~udict_set_ref(64, asset_id, updated_asset);
+    
+    ;; Save updated dictionary
+    set_data(begin_cell()
+        .store_slice(owner_address)
+        .store_uint(assets_count, 64)
+        .store_uint(next_asset_id, 64)
+        .store_dict(assets_dict)
+        .end_cell());
+}
+
+;; Message handling
+() recv_internal(int msg_value, cell in_msg_cell, slice in_msg) impure {
+    ;; Parse incoming message
+    slice cs = in_msg_cell.begin_parse();
+    int flags = cs~load_uint(4);
+    if (flags & 1) { ;; Ignore bounced messages
+        return ();
+    }
+    
+    slice sender_address = cs~load_msg_addr();
+    
+    ;; Parse op code and handle message
+    int op = in_msg~load_uint(32);
+    
+    if (op == op::add_asset) {
+        slice name = in_msg~load_ref().begin_parse();
+        slice description = in_msg~load_ref().begin_parse();
+        int price = in_msg~load_coins();
+        int status = in_msg~load_uint(8);
+        int auction_end_time = in_msg~load_uint(64);
+        add_asset(sender_address, name, description, price, status, auction_end_time);
+        return ();
+    }
+    
+    if (op == op::place_bid) {
+        int asset_id = in_msg~load_uint(64);
+        place_bid(sender_address, asset_id, msg_value);
+        return ();
+    }
+    
+    if (op == op::transfer_asset) {
+        int asset_id = in_msg~load_uint(64);
+        slice new_owner_address = in_msg~load_msg_addr();
+        transfer_asset(sender_address, asset_id, new_owner_address);
+        return ();
+    }
+    
+    if (op == op::withdraw_funds) {
+        (slice owner_address, _, _) = load_data();
+        
+        ;; Only contract owner can withdraw funds
+        throw_unless(401, equal_slices(sender_address, owner_address));
+        
+        ;; Send all contract balance (except for a small reserve) to the owner
+        raw_reserve(100000000, 0); ;; Reserve 0.1 TON for contract fees
+        
+        var msg = begin_cell()
+            .store_uint(0x18, 6)
+            .store_slice(owner_address)
+            .store_coins(0)
+            .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+            .store_uint(0, 32) ;; No op code for simple transfer
+            .store_slice("Withdraw successful")
+            .end_cell();
+        
+        ;; Send all remaining TON balance
+        send_raw_message(msg, 128);
+        return ();
+    }
+    
+    throw(0xffff); ;; Unknown op code
+}
+
+;; Get methods
+(slice, int, int) get_contract_info() method_id {
+    return load_data();
+}
+
+(int, slice, slice, slice, int, int, int) get_asset(int asset_id) method_id {
+    (_, int assets_count, _) = load_data();
+    if (assets_count == 0) {
+        return (0, null(), null(), null(), 0, 0, 0);
+    }
+    
+    cell assets_dict = get_data().begin_parse().skip_bits(64 + 256).preload_dict();
+    (cell asset_cell, int success) = assets_dict.udict_get_ref?(64, asset_id);
+    
+    if (~ success) {
+        return (0, null(), null(), null(), 0, 0, 0);
+    }
+    
+    slice asset_data = asset_cell.begin_parse();
+    int id = asset_data~load_uint(64);
+    slice name = asset_data~load_ref().begin_parse();
+    slice description = asset_data~load_ref().begin_parse();
+    slice owner = asset_data~load_msg_addr();
+    int price = asset_data~load_coins();
+    int status = asset_data~load_uint(8);
+    int auction_end_time = asset_data~load_uint(64);
+    
+    return (id, name, description, owner, price, status, auction_end_time);
+} 
