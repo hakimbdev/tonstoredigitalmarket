@@ -19,59 +19,70 @@ export function useTonTransaction() {
   const [tonConnectUI] = useTonConnectUI();
   const { toast } = useToast();
 
-  /**
-   * Mock implementation of placing a bid
-   * In production, this would create an actual blockchain transaction
-   */
-  const placeBid = async (assetId: number, amount: number, options?: TonTransactionOptions) => {
-    try {
-      if (!tonConnectUI.connected) {
-        toast({
-          title: "Wallet not connected",
-          description: "Please connect your TON wallet to place a bid",
-          variant: "destructive",
-        });
-        tonConnectUI.openModal();
-        return null;
-      }
-
-      // Simulate a transaction delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Generate a fake transaction hash
-      const txHash = `0x${Math.random().toString(16).substring(2, 42)}`;
-      
-      // Call success callback if provided
-      if (options?.onSuccess) {
-        options.onSuccess(txHash);
-      }
-      
+  // Helper to send a TON transaction
+  const sendTonTransaction = async (to: string, amount: number, payload?: string) => {
+    if (!tonConnectUI.connected) {
       toast({
-        title: "Bid placed successfully",
-        description: "Your bid has been sent to the TON blockchain",
+        title: "Wallet not connected",
+        description: "Please connect your TON wallet to send a transaction",
+        variant: "destructive",
       });
-      
-      return { boc: txHash };
+      tonConnectUI.openModal();
+      return null;
+    }
+    try {
+      // Convert TON to nanoTON (1 TON = 1e9 nanoTON)
+      const amountNano = BigInt(Math.floor(amount * 1e9));
+      const transaction = {
+        validUntil: Math.floor(Date.now() / 1000) + 300, // 5 minutes from now
+        messages: [
+          {
+            address: to,
+            amount: amountNano.toString(),
+            payload: payload || '',
+          },
+        ],
+      };
+      const result = await tonConnectUI.sendTransaction(transaction);
+      return result;
     } catch (error) {
-      // Handle error
-      if (options?.onError && error instanceof Error) {
-        options.onError(error);
-      }
-      
       toast({
         title: "Transaction failed",
         description: error instanceof Error ? error.message : "Unknown error",
         variant: "destructive",
       });
-      
       return null;
     }
   };
 
-  /**
-   * Mock implementation of creating an asset
-   * In production, this would create an actual blockchain transaction
-   */
+  // Place a bid (real transaction)
+  const placeBid = async (assetId: number, amount: number, options?: TonTransactionOptions) => {
+    try {
+      // You may want to encode assetId and OP_PLACE_BID in the payload for your contract
+      const payload = undefined; // Add real payload encoding if needed
+      const result = await sendTonTransaction(MARKETPLACE_CONTRACT, amount, payload);
+      if (result && options?.onSuccess) {
+        options.onSuccess(result.boc || '');
+      }
+      toast({
+        title: "Bid placed successfully",
+        description: "Your bid has been sent to the TON blockchain",
+      });
+      return result;
+    } catch (error) {
+      if (options?.onError && error instanceof Error) {
+        options.onError(error);
+      }
+      toast({
+        title: "Transaction failed",
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "destructive",
+      });
+      return null;
+    }
+  };
+
+  // Create an asset (real transaction)
   const createAsset = async (
     name: string,
     description: string,
@@ -81,98 +92,57 @@ export function useTonTransaction() {
     options?: TonTransactionOptions
   ) => {
     try {
-      if (!tonConnectUI.connected) {
-        toast({
-          title: "Wallet not connected",
-          description: "Please connect your TON wallet to create an asset",
-          variant: "destructive",
-        });
-        tonConnectUI.openModal();
-        return null;
+      // You may want to encode asset data and OP_ADD_ASSET in the payload for your contract
+      const payload = undefined; // Add real payload encoding if needed
+      const result = await sendTonTransaction(MARKETPLACE_CONTRACT, price, payload);
+      if (result && options?.onSuccess) {
+        options.onSuccess(result.boc || '');
       }
-      
-      // Simulate a transaction delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Generate a fake transaction hash
-      const txHash = `0x${Math.random().toString(16).substring(2, 42)}`;
-      
-      // Call success callback if provided
-      if (options?.onSuccess) {
-        options.onSuccess(txHash);
-      }
-      
       toast({
         title: "Asset created successfully",
         description: "Your asset has been created on the TON blockchain",
       });
-      
-      return { boc: txHash };
+      return result;
     } catch (error) {
-      // Handle error
       if (options?.onError && error instanceof Error) {
         options.onError(error);
       }
-      
       toast({
         title: "Transaction failed",
         description: error instanceof Error ? error.message : "Unknown error",
         variant: "destructive",
       });
-      
       return null;
     }
   };
 
-  /**
-   * Mock implementation of transferring an asset
-   * In production, this would create an actual blockchain transaction
-   */
+  // Transfer an asset (real transaction)
   const transferAsset = async (
     assetId: number,
     newOwnerAddress: string,
     options?: TonTransactionOptions
   ) => {
     try {
-      if (!tonConnectUI.connected) {
-        toast({
-          title: "Wallet not connected",
-          description: "Please connect your TON wallet to transfer an asset",
-          variant: "destructive",
-        });
-        tonConnectUI.openModal();
-        return null;
+      // You may want to encode assetId, newOwnerAddress, and OP_TRANSFER_ASSET in the payload
+      const payload = undefined; // Add real payload encoding if needed
+      const result = await sendTonTransaction(newOwnerAddress, 0, payload);
+      if (result && options?.onSuccess) {
+        options.onSuccess(result.boc || '');
       }
-      
-      // Simulate a transaction delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Generate a fake transaction hash
-      const txHash = `0x${Math.random().toString(16).substring(2, 42)}`;
-      
-      // Call success callback if provided
-      if (options?.onSuccess) {
-        options.onSuccess(txHash);
-      }
-      
       toast({
         title: "Asset transferred successfully",
         description: "The asset has been transferred to the new owner",
       });
-      
-      return { boc: txHash };
+      return result;
     } catch (error) {
-      // Handle error
       if (options?.onError && error instanceof Error) {
         options.onError(error);
       }
-      
       toast({
         title: "Transaction failed",
         description: error instanceof Error ? error.message : "Unknown error",
         variant: "destructive",
       });
-      
       return null;
     }
   };

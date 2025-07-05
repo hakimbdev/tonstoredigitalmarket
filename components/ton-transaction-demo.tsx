@@ -30,15 +30,22 @@ export function TonTransactionDemo() {
 
     try {
       setIsLoading(true);
-      
-      // In a real app, this would be a real transaction
-      // For this demo, we'll just simulate a delay
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      // Simulate a successful transaction
+      // Convert TON to nanoTON (1 TON = 1e9 nanoTON)
+      const amountNano = BigInt(Math.floor(parseFloat(amount) * 1e9));
+      const transaction = {
+        validUntil: Math.floor(Date.now() / 1000) + 300, // 5 minutes from now
+        messages: [
+          {
+            address: recipient,
+            amount: amountNano.toString(),
+            payload: '',
+          },
+        ],
+      };
+      const result = await tonConnectUI.sendTransaction(transaction);
       toast({
         title: "Transaction sent",
-        description: `${amount} TON sent to ${recipient.slice(0, 6)}...${recipient.slice(-4)}`,
+        description: result && result.boc ? `Transaction sent! BOC: ${result.boc}` : `Transaction sent to ${recipient.slice(0, 6)}...${recipient.slice(-4)}`,
       });
     } catch (error) {
       toast({
@@ -56,7 +63,7 @@ export function TonTransactionDemo() {
       <CardHeader>
         <CardTitle>Send TON</CardTitle>
         <CardDescription>
-          Send TON to another wallet address. This is a demo, no real transactions will be made.
+          Send TON to another wallet address. This will create a real transaction on the TON blockchain.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
